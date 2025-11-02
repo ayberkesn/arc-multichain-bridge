@@ -40,7 +40,7 @@ function AppContent() {
             </button>
             <div>
               <h1 className="text-3xl md:text-4xl font-bold text-gray-900 mb-2">
-                DeFi Platform
+                DeFi On ARC
               </h1>
               <p className="text-gray-600 text-xs md:text-sm">
                 Bridge, Swap, and Manage Liquidity

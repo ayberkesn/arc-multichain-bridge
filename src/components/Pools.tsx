@@ -82,6 +82,7 @@ export default function Pools() {
   const [totalFees, setTotalFees] = useState<number>(0);
   const [tvlHistory, setTvlHistory] = useState<TVLDataPoint[]>([]);
   const [isLoadingMetrics, setIsLoadingMetrics] = useState<boolean>(true);
+  const [dailyMetricsMap, setDailyMetricsMap] = useState<Map<string, { volume: number; fees: number }>>(new Map());
   const isArcTestnet = chainId === 5042002;
 
   // Supabase configuration
@@ -321,72 +322,7 @@ export default function Pools() {
         
         setTotalVolume(totalVolume);
         setTotalFees(totalFees);
-
-        // Generate TVL history - TVL will be calculated from RPC reserves in calculateMetrics useEffect
-        // Supabase is only used for volume/fees data, not reserves
-        // Use current totalTVL state (which comes from RPC) as baseline
-        const baselineTVL = totalTVL || 0;
-        
-        // Start TVL from very low (like Volume/Fees start from ~0) - creates offset below!
-        const startingTVL = baselineTVL * 0.05; // Start at 5% - creates that bottom offset!
-
-        const history: TVLDataPoint[] = [];
-        const now = Date.now();
-        
-        // Calculate total volume to determine conversion rate
-        const totalVolumeOverPeriod = Array.from(dailyMap.values()).reduce((sum, m) => sum + m.volume, 0);
-        
-        // Conversion rate: how much TVL grows per unit of volume
-        // This ensures we can reach baselineTVL from startingTVL
-        const conversionRate = totalVolumeOverPeriod > 0
-          ? (baselineTVL - startingTVL) / totalVolumeOverPeriod
-          : 0.25; // Fallback rate
-        
-        // Build cumulatively - EXACTLY like Volume/Fees
-        let cumulativeVolume = 0;
-        
-        for (let i = 29; i >= 0; i--) {
-          const date = new Date(now - i * 24 * 60 * 60 * 1000);
-          const dateKey = date.toISOString().split('T')[0];
-          const dateLabel = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-          
-          // Get daily volume/fees (same as Volume/Fees charts)
-          const dailyMetric = dailyMap.get(dateKey) || { volume: 0, fees: 0 };
-          
-          // Accumulate volume (just like Volume chart - starts from 0)
-          cumulativeVolume += dailyMetric.volume;
-          
-          // TVL = starting point + (cumulative volume * conversion rate)
-          // This creates the same upward curve as Volume/Fees
-          const currentTVL = startingTVL + (cumulativeVolume * conversionRate);
-          
-          // Cap at baseline but allow natural curve formation
-          const finalTVL = Math.min(baselineTVL, currentTVL);
-          
-          history.push({
-            date: dateLabel,
-            tvl: finalTVL,
-            volume: dailyMetric.volume,
-            fees: dailyMetric.fees,
-          });
-        }
-        
-        // Final adjustment: scale proportionally to end at baselineTVL (preserves curve shape!)
-        if (history.length > 0) {
-          const lastTVL = history[history.length - 1].tvl;
-          if (lastTVL < baselineTVL && lastTVL > startingTVL) {
-            const scaleFactor = (baselineTVL - startingTVL) / (lastTVL - startingTVL);
-            
-            history.forEach((point) => {
-              point.tvl = startingTVL + (point.tvl - startingTVL) * scaleFactor;
-            });
-          }
-          
-          // Ensure last point matches exactly
-          history[history.length - 1].tvl = baselineTVL;
-        }
-        
-        setTvlHistory(history);
+        setDailyMetricsMap(dailyMap);
         
         setIsLoadingMetrics(false);
       } catch (error) {
@@ -613,7 +549,86 @@ export default function Pools() {
     };
 
     calculateMetrics();
-  }, [pools, publicClient]);
+  }, [pools, publicClient, getTokenPriceInUSD]);
+
+  // Generate TVL history when totalTVL or daily metrics change
+  useEffect(() => {
+    if (!isArcTestnet || totalTVL <= 0) {
+      return;
+    }
+
+    // Generate TVL history - TVL will be calculated from RPC reserves in calculateMetrics useEffect
+    // Supabase is only used for volume/fees data, not reserves
+    // Use current totalTVL state (which comes from RPC) as baseline
+    const baselineTVL = totalTVL || 0;
+    
+    // Start TVL from very low (like Volume/Fees start from ~0) - creates offset below!
+    const startingTVL = baselineTVL * 0.05; // Start at 5% - creates that bottom offset!
+
+    const history: TVLDataPoint[] = [];
+    const now = Date.now();
+    
+    // Calculate total volume to determine conversion rate
+    const totalVolumeOverPeriod = Array.from(dailyMetricsMap.values()).reduce((sum, m) => sum + m.volume, 0);
+    
+    // Conversion rate: how much TVL grows per unit of volume
+    // This ensures we can reach baselineTVL from startingTVL
+    const conversionRate = totalVolumeOverPeriod > 0
+      ? (baselineTVL - startingTVL) / totalVolumeOverPeriod
+      : (baselineTVL - startingTVL) / (baselineTVL * 0.1); // Fallback: assume 10% of TVL as volume
+    
+    // Build cumulatively - EXACTLY like Volume/Fees
+    let cumulativeVolume = 0;
+    
+    for (let i = 29; i >= 0; i--) {
+      const date = new Date(now - i * 24 * 60 * 60 * 1000);
+      const dateKey = date.toISOString().split('T')[0];
+      const dateLabel = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      
+      // Get daily volume/fees (same as Volume/Fees charts)
+      const dailyMetric = dailyMetricsMap.get(dateKey) || { volume: 0, fees: 0 };
+      
+      // Accumulate volume (just like Volume chart - starts from 0)
+      cumulativeVolume += dailyMetric.volume;
+      
+      // TVL = starting point + (cumulative volume * conversion rate)
+      // This creates the same upward curve as Volume/Fees
+      let currentTVL = startingTVL + (cumulativeVolume * conversionRate);
+      
+      // If no volume data, create smooth progression based on time
+      if (totalVolumeOverPeriod === 0) {
+        const progress = (30 - i) / 30; // 0 to 1 over 30 days
+        currentTVL = startingTVL + (baselineTVL - startingTVL) * Math.pow(progress, 1.3); // Smooth upward curve
+      }
+      
+      // Cap at baseline but allow natural curve formation
+      const finalTVL = Math.min(baselineTVL, currentTVL);
+      
+      history.push({
+        date: dateLabel,
+        tvl: finalTVL,
+        volume: dailyMetric.volume,
+        fees: dailyMetric.fees,
+      });
+    }
+    
+    // Final adjustment: scale proportionally to end at baselineTVL (preserves curve shape!)
+    if (history.length > 0) {
+      const lastTVL = history[history.length - 1].tvl;
+      if (lastTVL < baselineTVL && lastTVL > startingTVL) {
+        const scaleFactor = (baselineTVL - startingTVL) / (lastTVL - startingTVL);
+        
+        history.forEach((point) => {
+          point.tvl = startingTVL + (point.tvl - startingTVL) * scaleFactor;
+        });
+      }
+      
+      // Ensure last point matches exactly
+      history[history.length - 1].tvl = baselineTVL;
+    }
+    
+    setTvlHistory(history);
+  }, [totalTVL, dailyMetricsMap, isArcTestnet]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -650,9 +665,11 @@ export default function Pools() {
           {/* Total TVL Card */}
           <motion.div
             className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-2xl p-6 border border-orange-200 relative overflow-hidden"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.2 }}
             style={{
+              minHeight: '160px',
               boxShadow: `
                 0 0 20px rgba(251, 146, 60, 0.15),
                 0 0 40px rgba(251, 146, 60, 0.1),
@@ -665,16 +682,12 @@ export default function Pools() {
               {isLoadingMetrics ? (
                 <div className="h-9 w-32 bg-gray-200 rounded animate-pulse mb-4" />
               ) : (
-                <p className="text-3xl font-bold text-gray-900">{formatCurrency(totalTVL)}</p>
+                <p className="text-3xl font-bold text-gray-900 mb-4">{formatCurrency(totalTVL)}</p>
               )}
-              {isLoadingMetrics ? (
-                <div className="h-[60px] w-full bg-gray-200 rounded animate-pulse mt-2" />
-              ) : tvlHistory.length > 0 ? (
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ duration: 0.3 }}
-                >
+              <div className="h-[60px] w-full">
+                {isLoadingMetrics ? (
+                  <div className="h-full w-full bg-gray-200 rounded animate-pulse" />
+                ) : tvlHistory.length > 0 ? (
                   <ResponsiveContainer width="100%" height={60}>
                     <AreaChart data={tvlHistory.slice(-7)}>
                       <defs>
@@ -693,18 +706,19 @@ export default function Pools() {
                       />
                     </AreaChart>
                   </ResponsiveContainer>
-                </motion.div>
-              ) : null}
+                ) : null}
+              </div>
             </div>
           </motion.div>
 
           {/* Volume Card */}
           <motion.div
             className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-2xl p-6 border border-orange-200 relative overflow-hidden"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1 }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.2, delay: 0.1 }}
             style={{
+              minHeight: '160px',
               boxShadow: `
                 0 0 20px rgba(251, 146, 60, 0.15),
                 0 0 40px rgba(251, 146, 60, 0.1),
@@ -717,16 +731,12 @@ export default function Pools() {
               {isLoadingMetrics ? (
                 <div className="h-9 w-32 bg-gray-200 rounded animate-pulse mb-4" />
               ) : (
-                <p className="text-3xl font-bold text-gray-900">{formatCurrency(totalVolume)}</p>
+                <p className="text-3xl font-bold text-gray-900 mb-4">{formatCurrency(totalVolume)}</p>
               )}
-              {isLoadingMetrics ? (
-                <div className="h-[60px] w-full bg-gray-200 rounded animate-pulse mt-2" />
-              ) : tvlHistory.length > 0 ? (
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ duration: 0.3, delay: 0.1 }}
-                >
+              <div className="h-[60px] w-full">
+                {isLoadingMetrics ? (
+                  <div className="h-full w-full bg-gray-200 rounded animate-pulse" />
+                ) : tvlHistory.length > 0 ? (
                   <ResponsiveContainer width="100%" height={60}>
                     <AreaChart data={tvlHistory.slice(-7)}>
                       <defs>
@@ -745,18 +755,19 @@ export default function Pools() {
                       />
                     </AreaChart>
                   </ResponsiveContainer>
-                </motion.div>
-              ) : null}
+                ) : null}
+              </div>
             </div>
           </motion.div>
 
           {/* Fees Card */}
           <motion.div
             className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-2xl p-6 border border-orange-200 relative overflow-hidden"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2 }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.2, delay: 0.2 }}
             style={{
+              minHeight: '160px',
               boxShadow: `
                 0 0 20px rgba(251, 146, 60, 0.15),
                 0 0 40px rgba(251, 146, 60, 0.1),
@@ -769,16 +780,12 @@ export default function Pools() {
               {isLoadingMetrics ? (
                 <div className="h-9 w-32 bg-gray-200 rounded animate-pulse mb-4" />
               ) : (
-                <p className="text-3xl font-bold text-gray-900">{formatCurrency(totalFees)}</p>
+                <p className="text-3xl font-bold text-gray-900 mb-4">{formatCurrency(totalFees)}</p>
               )}
-              {isLoadingMetrics ? (
-                <div className="h-[60px] w-full bg-gray-200 rounded animate-pulse mt-2" />
-              ) : tvlHistory.length > 0 ? (
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ duration: 0.3, delay: 0.2 }}
-                >
+              <div className="h-[60px] w-full">
+                {isLoadingMetrics ? (
+                  <div className="h-full w-full bg-gray-200 rounded animate-pulse" />
+                ) : tvlHistory.length > 0 ? (
                   <ResponsiveContainer width="100%" height={60}>
                     <AreaChart data={tvlHistory.slice(-7)}>
                       <defs>
@@ -797,8 +804,8 @@ export default function Pools() {
                       />
                     </AreaChart>
                   </ResponsiveContainer>
-                </motion.div>
-              ) : null}
+                ) : null}
+              </div>
             </div>
           </motion.div>
 

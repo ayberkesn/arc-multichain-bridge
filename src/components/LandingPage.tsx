@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { ArrowRight, ArrowLeftRight, RefreshCw, Droplets, Layers, Sparkles, Shield, Zap, Globe } from 'lucide-react';
+import { ArrowRight, ArrowLeftRight, RefreshCw, Droplets, Layers, Shield, Zap, Globe } from 'lucide-react';
 
 interface LandingPageProps {
   onGetStarted: () => void;
@@ -85,16 +85,11 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
             transition={{ delay: 0.2, type: 'spring', stiffness: 200 }}
             className="inline-flex items-center gap-2 px-3 sm:px-4 py-1.5 sm:py-2 bg-white rounded-full border border-gray-200 shadow-lg mb-4 sm:mb-6"
           >
-            <Sparkles className="w-4 h-4 sm:w-5 sm:h-5 text-orange-500" />
             <span className="text-xs sm:text-sm font-semibold text-gray-700">Powered by Arc Testnet</span>
           </motion.div>
 
           <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-bold text-gray-900 mb-4 sm:mb-6">
-            DeFi Platform
-            <br />
-            <span className="text-orange-500">
-              Arc Testnet
-            </span>
+            DeFi On ARC
           </h1>
 
           <p className="text-base sm:text-lg md:text-xl lg:text-2xl text-gray-600 max-w-3xl mx-auto mb-6 sm:mb-8 px-4">
