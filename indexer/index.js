@@ -708,13 +708,33 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 // Start the indexer (should run indefinitely)
-console.log('Initializing indexer...');
+console.log('🚀 Initializing DEX Indexer...');
+console.log('📍 Working directory:', process.cwd());
+console.log('📦 Node version:', process.version);
+console.log('');
+
+// Validate environment before starting
+if (!WSS_URL) {
+  console.error('❌ ERROR: WSS_URL environment variable is not set!');
+  console.error('   Please set WSS_URL in Railway environment variables');
+  process.exit(1);
+}
+
+if (!SUPABASE_URL || !SUPABASE_KEY) {
+  console.error('❌ ERROR: Supabase credentials not set!');
+  console.error('   Please set SUPABASE_URL and SUPABASE_ANON_KEY in Railway environment variables');
+  process.exit(1);
+}
+
 run().catch((error) => {
-  console.error('Fatal error in run loop:', error);
+  console.error('❌ Fatal error in run loop:', error);
+  if (error.stack) {
+    console.error('Stack trace:', error.stack);
+  }
   // Even on fatal error, try to restart after 30 seconds
   setTimeout(() => {
-    console.log('Attempting to restart indexer after error...');
-    run();
+    console.log('🔄 Attempting to restart indexer after error...');
+    run().catch(console.error);
   }, 30000);
 });
 
