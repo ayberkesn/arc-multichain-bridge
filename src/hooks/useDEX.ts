@@ -139,7 +139,8 @@ export function useDEX() {
   const swap = useCallback(async (
     tokenA: TokenSymbol,
     tokenB: TokenSymbol,
-    amountIn: string
+    amountIn: string,
+    slippagePercent: number = 0.5 // Default 0.5% slippage
   ) => {
     if (!address || !isConnected || !publicClient) throw new Error('Wallet not connected');
     
@@ -194,6 +195,54 @@ export function useDEX() {
       throw new Error('Insufficient allowance. Please approve first.');
     }
 
+    // Get pool reserves to calculate expected output
+    const [contractReserveA, contractReserveB] = await Promise.all([
+      publicClient.readContract({
+        address: poolAddress,
+        abi: POOL_ABI,
+        functionName: 'reserveA',
+      }),
+      publicClient.readContract({
+        address: poolAddress,
+        abi: POOL_ABI,
+        functionName: 'reserveB',
+      }),
+    ]) as [bigint, bigint];
+
+    // Get token decimals
+    const poolTokenADecimals = await publicClient.readContract({
+      address: poolTokenA,
+      abi: ERC20_ABI,
+      functionName: 'decimals',
+    }) as number;
+
+    const poolTokenBDecimals = await publicClient.readContract({
+      address: poolTokenB,
+      abi: ERC20_ABI,
+      functionName: 'decimals',
+    }) as number;
+
+    // Calculate expected output using Uniswap V2 formula
+    const reserveIn = isSwappingPoolTokenA ? contractReserveA : contractReserveB;
+    const reserveOut = isSwappingPoolTokenA ? contractReserveB : contractReserveA;
+    const reserveInDecimals = isSwappingPoolTokenA ? poolTokenADecimals : poolTokenBDecimals;
+    const reserveOutDecimals = isSwappingPoolTokenA ? poolTokenBDecimals : poolTokenADecimals;
+
+    // Uniswap V2 formula: amountOut = (amountIn * 997 * reserveOut) / (reserveIn * 1000 + amountIn * 997)
+    const FEE_BPS = 30; // 0.3% fee
+    const amountInWithFee = amountInWei * BigInt(10000 - FEE_BPS);
+    const numerator = amountInWithFee * reserveOut;
+    const denominator = (reserveIn * 10000n) + amountInWithFee;
+    const expectedOutputWei = numerator / denominator;
+
+    // Calculate minimum output with slippage protection
+    const slippageMultiplier = BigInt(Math.floor((100 - slippagePercent) * 100)); // e.g., 9950 for 0.5% (99.5%)
+    const minOutputWei = (expectedOutputWei * slippageMultiplier) / 10000n;
+
+    if (minOutputWei === 0n) {
+      throw new Error('Slippage too high or insufficient liquidity');
+    }
+
     // Perform swap using the correct function based on pool's token order
     try {
       if (isSwappingPoolTokenA) {
@@ -202,7 +251,7 @@ export function useDEX() {
           address: poolAddress,
           abi: POOL_ABI,
           functionName: 'swapAToB',
-          args: [amountInWei, 0n, address], // 0 min output, send to user
+          args: [amountInWei, minOutputWei, address], // Min output with slippage protection
         });
       } else {
         // User is swapping pool's tokenB for pool's tokenA
@@ -210,7 +259,7 @@ export function useDEX() {
           address: poolAddress,
           abi: POOL_ABI,
           functionName: 'swapBToA',
-          args: [amountInWei, 0n, address], // 0 min output, send to user
+          args: [amountInWei, minOutputWei, address], // Min output with slippage protection
         });
       }
     } catch (err: any) {

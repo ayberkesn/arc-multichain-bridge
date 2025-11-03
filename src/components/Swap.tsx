@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowDownUp, Settings, Info, ChevronDown, AlertCircle, CheckCircle2, Loader2, X } from 'lucide-react';
 import { useAccount, usePublicClient, useReadContract } from 'wagmi';
 import { useDEX, useTokenBalance, useSwapOutput, useTokenAllowance, usePoolReserves, TOKENS, type TokenSymbol, usePoolAddress } from '../hooks/useDEX';
-import { ERC20_ABI } from '../config/abis';
+import { ERC20_ABI, POOL_ABI } from '../config/abis';
 import { parseUnits, type Address } from 'viem';
 import { getPoolAddress } from '../hooks/useDEX';
 import TokenLogo from './TokenLogo';
@@ -151,42 +151,71 @@ export default function Swap() {
     return rate;
   }, [fromAmount, toAmount]);
 
+  // Get pool's actual token addresses to correctly map reserves
+  const { data: poolTokenA } = useReadContract({
+    address: poolAddress || undefined,
+    abi: POOL_ABI,
+    functionName: 'tokenA',
+    query: { enabled: !!poolAddress },
+  });
+
+  const { data: poolTokenB } = useReadContract({
+    address: poolAddress || undefined,
+    abi: POOL_ABI,
+    functionName: 'tokenB',
+    query: { enabled: !!poolAddress },
+  });
+
   // Calculate price impact
   const priceImpact = useMemo(() => {
-    if (!poolReserves.reserveA || !poolReserves.reserveB || !fromAmount || parseFloat(fromAmount) <= 0) return null;
+    if (!poolReserves.reserveA || !poolReserves.reserveB || !fromAmount || parseFloat(fromAmount) <= 0 || !poolTokenA || !poolTokenB) return null;
     
     const reserveA = parseFloat(poolReserves.reserveA);
     const reserveB = parseFloat(poolReserves.reserveB);
     
-    // Determine which reserve is which token
+    // CRITICAL: Match reserves based on pool's actual token order
+    // poolReserves.reserveA = pool's tokenA balance, reserveB = pool's tokenB balance
     const fromTokenAddr = TOKENS[fromToken].address.toLowerCase();
-    const toTokenAddr = TOKENS[toToken].address.toLowerCase();
-    const isFromTokenA = fromTokenAddr < toTokenAddr;
+    const poolTokenAAddr = (poolTokenA as string).toLowerCase();
+    const poolTokenBAddr = (poolTokenB as string).toLowerCase();
     
-    const reserveIn = isFromTokenA ? reserveA : reserveB;
-    const reserveOut = isFromTokenA ? reserveB : reserveA;
+    // Determine if user is swapping pool's tokenA or tokenB
+    const isSwappingPoolTokenA = fromTokenAddr === poolTokenAAddr;
+    
+    if (!isSwappingPoolTokenA && fromTokenAddr !== poolTokenBAddr) {
+      return null; // Token mismatch
+    }
+    
+    // Map reserves correctly: reserveIn = what user is putting in, reserveOut = what user is getting
+    const reserveIn = isSwappingPoolTokenA ? reserveA : reserveB;
+    const reserveOut = isSwappingPoolTokenA ? reserveB : reserveA;
     
     if (reserveIn === 0 || reserveOut === 0) return null;
     
-    // Calculate spot price before swap
+    // Calculate spot price before swap (price in terms of output token per input token)
     const spotPrice = reserveOut / reserveIn;
     
-    // Calculate price after swap (simplified - using constant product formula)
+    // Calculate price after swap using Uniswap V2 constant product formula with fee
     const amountIn = parseFloat(fromAmount);
-    // Fee is 0.3% (30 bps) - 10000 - 30 = 9970
+    // Fee is 0.3% (30 bps) - after fee: 9970/10000 = 0.997
     const amountInWithFee = amountIn * 0.997;
     const newReserveIn = reserveIn + amountInWithFee;
-    const newReserveOut = (reserveIn * reserveOut) / newReserveIn;
+    // Constant product: k = reserveIn * reserveOut (before and after swap)
+    const k = reserveIn * reserveOut;
+    const newReserveOut = k / newReserveIn;
     const amountOut = reserveOut - newReserveOut;
     
-    // Calculate execution price
+    if (amountOut <= 0) return null;
+    
+    // Calculate execution price (average price user gets)
     const executionPrice = amountOut / amountIn;
     
-    // Price impact = (execution price - spot price) / spot price * 100
-    const impact = ((executionPrice - spotPrice) / spotPrice) * 100;
+    // Price impact = percentage difference between execution price and spot price
+    // Negative impact means user gets less favorable price
+    const impact = ((spotPrice - executionPrice) / spotPrice) * 100;
     
     return impact > 0 ? impact : 0;
-  }, [poolReserves, fromAmount, fromToken, toToken]);
+  }, [poolReserves, fromAmount, fromToken, poolTokenA, poolTokenB]);
 
   // Calculate minimum receive amount (with slippage)
   const minReceive = useMemo(() => {
@@ -246,7 +275,8 @@ export default function Swap() {
           if (freshAllowance >= fromAmountWei) {
             // Approval confirmed, proceed to swap
             setSwapStep('swapping');
-            await swap(fromToken, toToken, fromAmount);
+            const slippageValue = parseFloat(slippage);
+            await swap(fromToken, toToken, fromAmount, slippageValue);
           } else {
             throw new Error('Approval incomplete');
           }
@@ -260,7 +290,7 @@ export default function Swap() {
 
       proceedToSwap();
     }
-  }, [isSuccess, swapStep, approvalCompleted, poolAddress, address, publicClient, fromToken, toToken, fromAmount, fromAmountWei, fromTokenInfo, swap]);
+  }, [isSuccess, swapStep, approvalCompleted, poolAddress, address, publicClient, fromToken, toToken, fromAmount, fromAmountWei, fromTokenInfo, swap, slippage]);
 
   // Track swap transaction hash when it's initiated
   useEffect(() => {
@@ -414,7 +444,8 @@ export default function Swap() {
         setSwapStep('swapping');
         setShowProgressModal(true);
         setApprovalCompleted(true); // Skip approval tracking
-        await swap(fromToken, toToken, fromAmount);
+        const slippageValue = parseFloat(slippage);
+        await swap(fromToken, toToken, fromAmount, slippageValue);
       }
     } catch (err: any) {
       const errorMsg = formatSwapError(err);
