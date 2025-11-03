@@ -10,6 +10,7 @@ import TokenLogo from './TokenLogo';
 import { addArcTestnetToWallet } from '../utils/addArcTestnet';
 import PriceChart from './PriceChart';
 import ActivityTab from './ActivityTab';
+import SwapSuccessModal from './SwapSuccessModal';
 
 const AVAILABLE_TOKENS: TokenSymbol[] = ['SRAC', 'RACS', 'SACS', 'USDC'];
 
@@ -43,6 +44,10 @@ export default function Swap() {
   const [isSwitchingNetwork, setIsSwitchingNetwork] = useState(false);
   const [swapConfirmed, setSwapConfirmed] = useState(false);
   const [swapStartTime, setSwapStartTime] = useState<number | null>(null);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [successShownForHash, setSuccessShownForHash] = useState<`0x${string}` | null>(null);
+  const [swapTransactionStarted, setSwapTransactionStarted] = useState(false);
+  const [hasBeenPendingForCurrentHash, setHasBeenPendingForCurrentHash] = useState(false);
   
   // Check if on Arc Testnet
   const isArcTestnet = chainId === 5042002;
@@ -293,14 +298,22 @@ export default function Swap() {
   }, [isSuccess, swapStep, approvalCompleted, poolAddress, address, publicClient, fromToken, toToken, fromAmount, fromAmountWei, fromTokenInfo, swap, slippage]);
 
   // Track swap transaction hash when it's initiated
+  // CRITICAL: This effect only runs when hash changes to a NEW transaction
   useEffect(() => {
-    if (hash && swapStep === 'swapping' && !swapHash) {
-      // Capture the swap transaction hash
-      setSwapHash(hash);
-      setSwapStartTime(Date.now());
-      setSwapConfirmed(false);
+    if (hash && swapStep === 'swapping') {
+      // Only update if hash changed (new transaction) - this means a NEW swap transaction started
+      if (!swapHash || swapHash !== hash) {
+        // This is a NEW transaction hash - reset everything for this new swap
+        setSwapHash(hash);
+        setSwapStartTime(Date.now());
+        setSwapConfirmed(false);
+        setShowSuccessModal(false); // Ensure success modal is closed for new transaction
+        setSuccessShownForHash(null); // Reset success tracking for new transaction
+        setSwapTransactionStarted(true); // Mark that we've started a new swap transaction
+        setHasBeenPendingForCurrentHash(false); // Reset pending state tracking for new transaction
+      }
     }
-  }, [hash, swapStep, swapHash]);
+  }, [hash, swapStep]); // Remove swapHash from deps to detect hash changes properly
 
   // Auto-confirm swap success after 5 seconds if we have a hash (since chain is fast)
   useEffect(() => {
@@ -322,29 +335,51 @@ export default function Swap() {
     }
   }, [swapHash, swapStep, swapConfirmed, swapStartTime]);
 
+  // Track when we've been pending for the current hash (prevents stale isSuccess from triggering)
+  useEffect(() => {
+    if (swapStep === 'swapping' && swapHash && hash && swapHash === hash) {
+      if (isPending || isConfirming) {
+        // Mark that we've been through pending state for this hash
+        setHasBeenPendingForCurrentHash(true);
+      }
+    } else {
+      // Reset when not swapping or hash changes
+      setHasBeenPendingForCurrentHash(false);
+    }
+  }, [isPending, isConfirming, swapStep, swapHash, hash]);
+
   // Track swap progress and errors
   useEffect(() => {
     // Only show modal and track progress during active steps
     if (swapStep !== 'none') {
       if (isPending || isConfirming) {
+        // Transaction is in progress - show progress modal
         if (!showProgressModal) {
           setShowProgressModal(true);
         }
-      } else if (swapStep === 'swapping' && swapHash && (isSuccess || swapConfirmed) && !isPending && !isConfirming) {
-        // Show success if either isSuccess is true OR 5 seconds have passed (chain is fast)
-        // Close modal after 5 seconds
-        const timeoutId = setTimeout(() => {
-          setShowProgressModal(false);
-          setSwapStep('none');
-          setFromAmount('');
-          setToAmount('');
-          setApprovalCompleted(false);
-          setSwapHash(null);
-          setSwapConfirmed(false);
-          setSwapStartTime(null);
-        }, 5000); // Close after 5 seconds
-        
-        return () => clearTimeout(timeoutId);
+      } else if (
+        swapStep === 'swapping' && 
+        swapHash && 
+        hash && 
+        swapHash === hash && 
+        swapTransactionStarted && // CRITICAL: Only show if we actually started this transaction
+        hasBeenPendingForCurrentHash && // CRITICAL: Must have gone through pending state for this hash
+        isSuccess && 
+        !isPending && 
+        !isConfirming && 
+        !showSuccessModal && 
+        successShownForHash !== hash
+      ) {
+        // Show success modal only after actual on-chain confirmation
+        // isSuccess from useWaitForTransactionReceipt ensures transaction is confirmed
+        // Only show if: we're in swapping step, have a hash, hash matches current transaction, 
+        // we started this transaction, we've been through pending state, isSuccess is true, and we haven't shown success for this hash yet
+        setShowProgressModal(false); // Close progress modal first
+        setShowSuccessModal(true); // Show success modal
+        setSuccessShownForHash(hash); // Mark that we've shown success for this hash
+      } else if (swapStep === 'approving' && !isPending && !isConfirming && !approvalCompleted) {
+        // Approval completed but hasn't proceeded to swap yet - keep modal open
+        // This handles the gap between approval completion and swap initiation
       } else if (error && swapStep === 'swapping') {
         // Only show error if we're actually in the swapping step
         const errorMsg = formatSwapError(error);
@@ -356,12 +391,16 @@ export default function Swap() {
           setSwapHash(null);
           setSwapConfirmed(false);
           setSwapStartTime(null);
+          setShowSuccessModal(false); // Reset success modal on error
+          setSuccessShownForHash(null); // Reset success tracking on error
+          setSwapTransactionStarted(false); // Reset transaction started flag on error
+          setHasBeenPendingForCurrentHash(false); // Reset pending state tracking on error
         }, 3000);
         
         return () => clearTimeout(timeoutId);
       }
     }
-  }, [isPending, isConfirming, isSuccess, error, swapStep, showProgressModal, swapHash, swapConfirmed]);
+  }, [isPending, isConfirming, isSuccess, error, swapStep, showProgressModal, swapHash, showSuccessModal, hash, approvalCompleted, successShownForHash, swapTransactionStarted, hasBeenPendingForCurrentHash]);
 
   const handleAmountChange = (value: string, type: 'from' | 'to') => {
     if (type === 'from') {
@@ -426,26 +465,40 @@ export default function Swap() {
     setShowReviewModal(false);
     
     try {
-      // Reset state for new swap attempt
+      // Reset ALL state for new swap attempt
       setErrorMessage(null);
+      setSwapStep('none'); // Reset swap step first
       setApprovalCompleted(false);
       setSwapHash(null);
       setSwapConfirmed(false);
       setSwapStartTime(null);
+      setShowSuccessModal(false); // CRITICAL: Reset success modal state
+      setSuccessShownForHash(null); // CRITICAL: Reset success tracking
+      setSwapTransactionStarted(false); // CRITICAL: Reset transaction started flag
+      setHasBeenPendingForCurrentHash(false); // CRITICAL: Reset pending state tracking
+      setShowProgressModal(false); // Close any existing progress modal
+      
+      // Small delay to ensure state is fully reset before starting new transaction
+      await new Promise(resolve => setTimeout(resolve, 100));
       
       // Check if approval is needed
       if (needsApproval) {
         // Need approval first
+        // CRITICAL: Ensure swapTransactionStarted is false during approval
+        setSwapTransactionStarted(false);
         setSwapStep('approving');
         setShowProgressModal(true);
         approveForSwap(fromToken, poolAddress);
       } else {
         // Already approved, proceed directly to swap
+        // CRITICAL: Reset transaction started flag before swap
+        setSwapTransactionStarted(false);
         setSwapStep('swapping');
         setShowProgressModal(true);
         setApprovalCompleted(true); // Skip approval tracking
         const slippageValue = parseFloat(slippage);
         await swap(fromToken, toToken, fromAmount, slippageValue);
+        // Note: swapTransactionStarted will be set to true when hash is captured in useEffect
       }
     } catch (err: any) {
       const errorMsg = formatSwapError(err);
@@ -456,6 +509,7 @@ export default function Swap() {
       setSwapHash(null);
       setSwapConfirmed(false);
       setSwapStartTime(null);
+      setShowSuccessModal(false); // Reset success modal on error
     }
   };
 
@@ -800,15 +854,7 @@ export default function Swap() {
           </div>
         )}
 
-        {/* Success Message - Only show when swap transaction is complete, not approval */}
-        {swapStep === 'swapping' && swapHash && (isSuccess || swapConfirmed) && !isPending && !isConfirming && !showProgressModal && (
-          <div className="mb-4 p-3 bg-green-50/80 rounded-xl border border-green-200/50 flex items-start gap-2 relative z-10">
-            <CheckCircle2 className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
-            <div className="text-sm text-green-800">
-              <p className="font-medium">Swap Successful!</p>
-            </div>
-          </div>
-        )}
+        {/* Success Message removed - now using SwapSuccessModal component */}
 
         {/* Error Message - Only show when not in modal */}
         {errorMessage && !showProgressModal && (
@@ -1167,17 +1213,7 @@ export default function Swap() {
                   </div>
 
                   {/* Success Message - Only show when swap is actually confirmed */}
-                  {swapStep === 'swapping' && swapHash && (isSuccess || swapConfirmed) && !isPending && !isConfirming && (
-                    <motion.div
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className="mt-4 p-4 bg-green-50 rounded-xl border border-green-200"
-                    >
-                      <p className="text-sm font-medium text-green-800 text-center">
-                        Swap completed successfully! 🎉
-                      </p>
-                    </motion.div>
-                  )}
+                  {/* Success message removed - now using SwapSuccessModal component */}
 
                   {/* Error Message */}
                   {errorMessage && (
@@ -1226,6 +1262,30 @@ export default function Swap() {
 
       {/* Activity Tab - Floating button and swap history */}
       <ActivityTab />
+
+      {/* Swap Success Modal */}
+      <SwapSuccessModal
+        isOpen={showSuccessModal}
+        onClose={() => {
+          setShowSuccessModal(false);
+          // Reset ALL swap state when closing success modal
+          setSwapStep('none');
+          setFromAmount('');
+          setToAmount('');
+          setApprovalCompleted(false);
+          setSwapHash(null);
+          setSwapConfirmed(false);
+          setSwapStartTime(null);
+          setSuccessShownForHash(null); // CRITICAL: Reset success tracking so next swap can show success
+          setSwapTransactionStarted(false); // CRITICAL: Reset transaction started flag
+          setHasBeenPendingForCurrentHash(false); // CRITICAL: Reset pending state tracking
+        }}
+        fromToken={fromToken}
+        toToken={toToken}
+        fromAmount={fromAmount}
+        toAmount={toAmount}
+        price={exchangeRate}
+      />
     </div>
   );
 }
