@@ -9,6 +9,7 @@ import { getPoolAddress } from '../hooks/useDEX';
 import TokenLogo from './TokenLogo';
 import { addArcTestnetToWallet } from '../utils/addArcTestnet';
 import PriceChart from './PriceChart';
+import ActivityTab from './ActivityTab';
 
 const AVAILABLE_TOKENS: TokenSymbol[] = ['SRAC', 'RACS', 'SACS', 'USDC'];
 
@@ -768,8 +769,8 @@ export default function Swap() {
           </div>
         )}
 
-        {/* Success Message */}
-        {isSuccess && (
+        {/* Success Message - Only show when swap transaction is complete, not approval */}
+        {swapStep === 'swapping' && swapHash && (isSuccess || swapConfirmed) && !isPending && !isConfirming && !showProgressModal && (
           <div className="mb-4 p-3 bg-green-50/80 rounded-xl border border-green-200/50 flex items-start gap-2 relative z-10">
             <CheckCircle2 className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
             <div className="text-sm text-green-800">
@@ -1033,10 +1034,26 @@ export default function Swap() {
               >
                 <div className="flex items-center justify-between mb-6">
                   <h3 className="text-xl font-bold text-gray-900">Swap Progress</h3>
-                  {(!isPending && !isConfirming && swapStep === 'none') || (swapStep === 'swapping' && swapHash && (isSuccess || swapConfirmed) && !isPending && !isConfirming) ? (
+                  {/* Show close button when transaction is complete OR when not actively processing */}
+                  {(swapStep === 'swapping' && swapHash && (isSuccess || swapConfirmed) && !isPending && !isConfirming) || 
+                   (swapStep === 'approving' && !isPending && !isConfirming && approvalCompleted) ||
+                   (!isPending && !isConfirming && swapStep === 'none') ? (
                     <button
-                      onClick={() => setShowProgressModal(false)}
+                      onClick={() => {
+                        setShowProgressModal(false);
+                        if (swapStep === 'swapping' && swapHash && (isSuccess || swapConfirmed)) {
+                          // Reset state when closing after successful swap
+                          setSwapStep('none');
+                          setFromAmount('');
+                          setToAmount('');
+                          setApprovalCompleted(false);
+                          setSwapHash(null);
+                          setSwapConfirmed(false);
+                          setSwapStartTime(null);
+                        }
+                      }}
                       className="text-gray-400 hover:text-gray-600 transition-colors"
+                      aria-label="Close"
                     >
                       <X className="w-5 h-5" />
                     </button>
@@ -1175,6 +1192,9 @@ export default function Swap() {
           />
         </motion.div>
       </div>
+
+      {/* Activity Tab - Floating button and swap history */}
+      <ActivityTab />
     </div>
   );
 }
