@@ -121,7 +121,7 @@ const KNOWN_TOKENS = {
 
 // Environment variables
 const WSS_URL = process.env.WSS_URL || 'wss://rpc.testnet.arc.network';
-const HTTP_RPC_URL = process.env.HTTP_RPC_URL || 'https://arc-testnet.g.alchemy.com/v2/od-Qy7D8pDM1cvXoJOBR5KIcDluzHp90';
+const HTTP_RPC_URL = process.env.HTTP_RPC_URL || 'https://arc-testnet.g.alchemy.com/v2/Gwa0xpQWE3hHxyKllpxbGQmkRLNhV51N';
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY || '';
 
