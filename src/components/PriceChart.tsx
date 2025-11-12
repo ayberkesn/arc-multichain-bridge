@@ -18,7 +18,7 @@ export default function PriceChart({
   poolAddress,
   height = 300,
 }: PriceChartProps) {
-  const [timeRange, setTimeRange] = useState<'1H' | '1D' | '1W' | '1M'>('1D');
+  const [timeRange, setTimeRange] = useState<'1H' | '1D' | '1W' | '1M'>('1H');
   const [chartReady, setChartReady] = useState(false);
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<ReturnType<typeof createChart> | null>(null);

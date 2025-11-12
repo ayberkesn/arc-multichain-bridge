@@ -11,6 +11,7 @@ import { addArcTestnetToWallet } from '../utils/addArcTestnet';
 import PriceChart from './PriceChart';
 import ActivityTab from './ActivityTab';
 import SwapSuccessModal from './SwapSuccessModal';
+import SwapActivity from './SwapActivity';
 
 const AVAILABLE_TOKENS: TokenSymbol[] = ['SRAC', 'RACS', 'SACS', 'USDC'];
 
@@ -1259,6 +1260,13 @@ export default function Swap() {
           />
         </motion.div>
       </div>
+
+      {/* Swap Activity - Show swap events for current pair */}
+      <SwapActivity
+        fromToken={fromToken}
+        toToken={toToken}
+        poolAddress={poolAddress}
+      />
 
       {/* Activity Tab - Floating button and swap history */}
       <ActivityTab />
