@@ -199,88 +199,6 @@ export default function Pools() {
   // USDC address (Arc Testnet)
   const USDC_ADDRESS = '0x3600000000000000000000000000000000000000';
 
-  // Fetch metrics from Supabase immediately on load - calculate from swap_events directly
-  useEffect(() => {
-    if (!isArcTestnet || !supabaseUrl || !supabaseKey) {
-      setIsLoadingMetrics(false);
-      return;
-    }
-
-    const fetchMetricsFast = async () => {
-      setIsLoadingMetrics(true);
-      
-      try {
-        // Fetch swap events from last 30 days (Supabase only for volume/fees, not reserves)
-        const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-        const swapEventsResponse = await fetch(
-          `${supabaseUrl}/rest/v1/swap_events?timestamp=gte.${thirtyDaysAgo}&select=token_in,token_out,amount_in,amount_out,timestamp&order=timestamp.asc&limit=10000`,
-          {
-            headers: {
-              'apikey': supabaseKey,
-              'Authorization': `Bearer ${supabaseKey}`,
-              'Prefer': 'count=exact',
-            },
-          }
-        );
-
-        // Calculate volume and fees from swap events using USDC amounts (6 decimals)
-        let totalVolume = 0;
-        let totalFees = 0;
-        const dailyMap = new Map<string, { volume: number; fees: number }>();
-        
-        if (swapEventsResponse.ok) {
-          const swapEvents = await swapEventsResponse.json();
-          const usdcLower = USDC_ADDRESS.toLowerCase();
-          
-          for (const event of swapEvents) {
-            let volumeUSD = 0;
-            
-            // Use USDC amount directly if USDC is in or out (6 decimals)
-            const tokenInLower = event.token_in?.toLowerCase();
-            const tokenOutLower = event.token_out?.toLowerCase();
-            
-            if (tokenInLower === usdcLower) {
-              // USDC is tokenIn - use amount_in with 6 decimals
-              volumeUSD = Number(event.amount_in) / 1e6;
-            } else if (tokenOutLower === usdcLower) {
-              // USDC is tokenOut - use amount_out with 6 decimals
-              volumeUSD = Number(event.amount_out) / 1e6;
-            }
-            // Skip token-to-token swaps (no USDC involved)
-            
-            if (volumeUSD > 0) {
-              const feesUSD = volumeUSD * 0.003; // 0.3% fee
-              
-              totalVolume += volumeUSD;
-              totalFees += feesUSD;
-              
-              // Group by date for chart
-              const eventDate = new Date(event.timestamp);
-              const dateKey = eventDate.toISOString().split('T')[0];
-              const existing = dailyMap.get(dateKey) || { volume: 0, fees: 0 };
-              existing.volume += volumeUSD;
-              existing.fees += feesUSD;
-              dailyMap.set(dateKey, existing);
-            }
-          }
-        }
-        
-        setTotalVolume(totalVolume);
-        setTotalFees(totalFees);
-        setDailyMetricsMap(dailyMap);
-        
-        setIsLoadingMetrics(false);
-      } catch (error) {
-        console.error('Error fetching metrics from Supabase:', error);
-        setIsLoadingMetrics(false);
-      }
-    };
-
-    fetchMetricsFast();
-  }, [isArcTestnet, supabaseUrl, supabaseKey]);
-
-  // Note: Swap events and fees/volume tracking will be handled by a backend indexer
-
   // Helper function to get token price in USD via USDC pairs
   // This finds direct USDC pairs first, then tries indirect routes (e.g., RACD -> RAC/RACD -> RAC/USDC)
   const getTokenPriceInUSD = useCallback(async (tokenAddress: Address, allPools: PoolInfo[]): Promise<number> => {
@@ -415,6 +333,179 @@ export default function Pools() {
     console.warn(`Could not find price for token ${tokenAddress} - no USDC pair or indirect route found`);
     return 0;
   }, [publicClient]);
+
+  // Fetch metrics from Supabase immediately on load - calculate from swap_events directly
+  // Uses pagination to fetch ALL events, not just the first batch
+  useEffect(() => {
+    if (!isArcTestnet || !supabaseUrl || !supabaseKey) {
+      setIsLoadingMetrics(false);
+      return;
+    }
+
+    const fetchMetricsFast = async () => {
+      setIsLoadingMetrics(true);
+      
+      try {
+        // Fetch ALL swap events using pagination (Supabase has a max limit per request)
+        // We'll fetch in batches of 1000 until we get all events
+        let allSwapEvents: any[] = [];
+        let offset = 0;
+        const limit = 1000; // Supabase PostgREST max limit per request
+        let hasMore = true;
+        
+        while (hasMore) {
+          const swapEventsResponse = await fetch(
+            `${supabaseUrl}/rest/v1/swap_events?select=token_in,token_out,amount_in,amount_out,timestamp&order=timestamp.asc&limit=${limit}&offset=${offset}`,
+            {
+              headers: {
+                'apikey': supabaseKey,
+                'Authorization': `Bearer ${supabaseKey}`,
+                'Prefer': 'count=exact',
+              },
+            }
+          );
+
+          if (!swapEventsResponse.ok) {
+            break;
+          }
+
+          const swapEvents = await swapEventsResponse.json();
+          
+          if (swapEvents.length === 0) {
+            hasMore = false;
+          } else {
+            allSwapEvents = allSwapEvents.concat(swapEvents);
+            
+            // If we got fewer than the limit, we've reached the end
+            if (swapEvents.length < limit) {
+              hasMore = false;
+            } else {
+              offset += limit;
+            }
+          }
+        }
+
+        // Calculate volume and fees from swap events
+        // For USDC swaps: use USDC amount directly
+        // For token-to-token swaps: calculate USD value using token prices
+        let totalVolume = 0;
+        let totalFees = 0;
+        const dailyMap = new Map<string, { volume: number; fees: number }>();
+        
+        const usdcLower = USDC_ADDRESS.toLowerCase();
+        
+        // Pre-calculate prices for all unique tokens (needed for token-to-token swaps)
+        const tokenPrices = new Map<string, number>();
+        const uniqueTokens = new Set<string>();
+        
+        // Collect all unique tokens
+        for (const event of allSwapEvents) {
+          if (event.token_in) uniqueTokens.add(event.token_in.toLowerCase());
+          if (event.token_out) uniqueTokens.add(event.token_out.toLowerCase());
+        }
+        
+        // Pre-calculate prices for all tokens (if pools are loaded)
+        if (pools.length > 0 && publicClient) {
+          const pricePromises = Array.from(uniqueTokens).map(async (tokenAddr) => {
+            if (tokenAddr === usdcLower) {
+              tokenPrices.set(tokenAddr, 1); // USDC is always $1
+              return;
+            }
+            try {
+              const price = await getTokenPriceInUSD(tokenAddr as Address, pools);
+              tokenPrices.set(tokenAddr, price);
+            } catch (error) {
+              tokenPrices.set(tokenAddr, 0);
+            }
+          });
+          
+          // Wait for all prices to be calculated
+          await Promise.all(pricePromises);
+        }
+        
+        // Now calculate volume and fees for all events
+        for (const event of allSwapEvents) {
+          let volumeUSD = 0;
+          
+          const tokenInLower = event.token_in?.toLowerCase();
+          const tokenOutLower = event.token_out?.toLowerCase();
+          
+          // Case 1: USDC is involved - use USDC amount directly
+          if (tokenInLower === usdcLower) {
+            // USDC is tokenIn - use amount_in with 6 decimals
+            volumeUSD = Number(event.amount_in) / 1e6;
+          } else if (tokenOutLower === usdcLower) {
+            // USDC is tokenOut - use amount_out with 6 decimals
+            volumeUSD = Number(event.amount_out) / 1e6;
+          } else {
+            // Case 2: Token-to-token swap (no USDC) - calculate USD value using token prices
+            const tokenInDecimals = Object.entries(TOKENS).find(([_, info]) => 
+              info.address.toLowerCase() === tokenInLower
+            )?.[1]?.decimals || 18;
+            
+            const tokenOutDecimals = Object.entries(TOKENS).find(([_, info]) => 
+              info.address.toLowerCase() === tokenOutLower
+            )?.[1]?.decimals || 18;
+            
+            const amountIn = Number(event.amount_in) / Math.pow(10, tokenInDecimals);
+            const amountOut = Number(event.amount_out) / Math.pow(10, tokenOutDecimals);
+            
+            // Get prices (should be pre-calculated)
+            const tokenInPrice = tokenPrices.get(tokenInLower) || 0;
+            const tokenOutPrice = tokenPrices.get(tokenOutLower) || 0;
+            
+            // Use whichever price is available and non-zero
+            if (tokenInPrice > 0) {
+              volumeUSD = amountIn * tokenInPrice;
+            } else if (tokenOutPrice > 0) {
+              volumeUSD = amountOut * tokenOutPrice;
+            } else {
+              // If no price available, skip this swap (can't calculate USD value)
+              continue;
+            }
+          }
+          
+          if (volumeUSD > 0) {
+            const feesUSD = volumeUSD * 0.003; // 0.3% fee
+            
+            totalVolume += volumeUSD;
+            totalFees += feesUSD;
+            
+            // Group by date for chart (only last 30 days for chart display)
+            const eventDate = new Date(event.timestamp);
+            const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+            
+            if (eventDate.getTime() >= thirtyDaysAgo) {
+              const dateKey = eventDate.toISOString().split('T')[0];
+              const existing = dailyMap.get(dateKey) || { volume: 0, fees: 0 };
+              existing.volume += volumeUSD;
+              existing.fees += feesUSD;
+              dailyMap.set(dateKey, existing);
+            }
+          }
+        }
+        
+        setTotalVolume(totalVolume);
+        setTotalFees(totalFees);
+        setDailyMetricsMap(dailyMap);
+        
+        setIsLoadingMetrics(false);
+      } catch (error) {
+        setIsLoadingMetrics(false);
+      }
+    };
+
+    fetchMetricsFast();
+    
+    // Auto-refresh every 5 minutes to get new swaps
+    const refreshInterval = setInterval(() => {
+      fetchMetricsFast();
+    }, 300000); // 5 minutes (300000 ms)
+    
+    return () => clearInterval(refreshInterval);
+  }, [isArcTestnet, supabaseUrl, supabaseKey, pools, publicClient, getTokenPriceInUSD]);
+
+  // Note: Swap events and fees/volume tracking will be handled by a backend indexer
 
   // Calculate TVL and fees from all pools
   useEffect(() => {
