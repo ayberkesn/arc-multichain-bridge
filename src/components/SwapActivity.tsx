@@ -2,7 +2,6 @@ import { useState, useEffect, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { ArrowUpRight, ArrowDownRight, ExternalLink, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { formatUnits, type Address } from 'viem';
-import { usePublicClient } from 'wagmi';
 import { TOKENS, type TokenSymbol } from '../hooks/useDEX';
 import TokenLogo from './TokenLogo';
 
@@ -14,6 +13,7 @@ interface SwapEvent {
   amount_in: string;
   amount_out: string;
   timestamp: string;
+  sender_address: string | null;
 }
 
 interface SwapActivityProps {
@@ -27,9 +27,7 @@ const EVENTS_PER_PAGE = 24;
 export default function SwapActivity({ fromToken, toToken, poolAddress }: SwapActivityProps) {
   const [swapEvents, setSwapEvents] = useState<SwapEvent[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [traderAddresses, setTraderAddresses] = useState<Record<string, string>>({});
   const [currentPage, setCurrentPage] = useState(1);
-  const publicClient = usePublicClient();
 
   // Supabase configuration
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
@@ -51,7 +49,7 @@ export default function SwapActivity({ fromToken, toToken, poolAddress }: SwapAc
       try {
         const poolAddrLower = poolAddress.toLowerCase();
         const response = await fetch(
-          `${supabaseUrl}/rest/v1/swap_events?pool_address=eq.${poolAddrLower}&select=tx_hash,pool_address,token_in,token_out,amount_in,amount_out,timestamp&order=timestamp.desc&limit=1000`,
+          `${supabaseUrl}/rest/v1/swap_events?pool_address=eq.${poolAddrLower}&select=tx_hash,pool_address,token_in,token_out,amount_in,amount_out,timestamp,sender_address&order=timestamp.desc&limit=1000`,
           {
             headers: {
               'apikey': supabaseKey,
@@ -74,37 +72,6 @@ export default function SwapActivity({ fromToken, toToken, poolAddress }: SwapAc
     fetchSwapEvents();
   }, [poolAddress, supabaseUrl, supabaseKey, fromTokenAddr, toTokenAddr]);
 
-  // Fetch trader addresses for swap events
-  useEffect(() => {
-    if (!publicClient || swapEvents.length === 0) return;
-
-    const fetchTraderAddresses = async () => {
-      const addresses: Record<string, string> = {};
-      
-      // Fetch addresses for current page events (to avoid too many requests)
-      const startIdx = (currentPage - 1) * EVENTS_PER_PAGE;
-      const endIdx = startIdx + EVENTS_PER_PAGE;
-      const eventsToFetch = swapEvents.slice(startIdx, endIdx);
-      
-      await Promise.all(
-        eventsToFetch.map(async (event) => {
-          try {
-            const receipt = await publicClient.getTransactionReceipt({
-              hash: event.tx_hash as `0x${string}`,
-            });
-            addresses[event.tx_hash] = receipt.from;
-          } catch {
-            // If we can't get receipt, use truncated hash
-            addresses[event.tx_hash] = event.tx_hash.slice(0, 6) + '...' + event.tx_hash.slice(-4);
-          }
-        })
-      );
-      
-      setTraderAddresses(addresses);
-    };
-
-    fetchTraderAddresses();
-  }, [publicClient, swapEvents, currentPage]);
 
   // Pagination calculations
   const totalPages = Math.ceil(swapEvents.length / EVENTS_PER_PAGE);
@@ -192,18 +159,18 @@ export default function SwapActivity({ fromToken, toToken, poolAddress }: SwapAc
     return null;
   }
 
-  // Get trader address from transaction
-  const getTraderAddress = (txHash: string): string => {
-    if (traderAddresses[txHash]) {
-      const addr = traderAddresses[txHash];
-      // If it's a full address, truncate it
+  // Get trader address from swap event
+  const getTraderAddress = (event: SwapEvent): string => {
+    if (event.sender_address) {
+      const addr = event.sender_address;
+      // Truncate address for display
       if (addr.startsWith('0x') && addr.length === 42) {
         return addr.slice(0, 6) + '...' + addr.slice(-4);
       }
-      return addr; // Already truncated
+      return addr;
     }
-    // Fallback to truncated tx hash
-    return txHash.slice(0, 6) + '...' + txHash.slice(-4);
+    // Fallback to truncated tx hash if no sender_address
+    return event.tx_hash.slice(0, 6) + '...' + event.tx_hash.slice(-4);
   };
 
   return (
@@ -263,7 +230,7 @@ export default function SwapActivity({ fromToken, toToken, poolAddress }: SwapAc
                     <td className="py-3 px-4">
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-medium text-gray-900">
-                          {getTraderAddress(event.tx_hash)}
+                          {getTraderAddress(event)}
                         </span>
                         <a
                           href={`https://explorer.arc.network/tx/${event.tx_hash}`}

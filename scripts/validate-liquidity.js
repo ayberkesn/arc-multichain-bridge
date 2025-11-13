@@ -13,10 +13,7 @@ import { createPublicClient, http, formatUnits, parseUnits } from 'viem';
 dotenv.config();
 
 // Arc Testnet RPC
-const ALCHEMY_API_KEY = process.env.VITE_ALCHEMY_API_KEY || process.env.ALCHEMY_API_KEY;
-const RPC_URL = ALCHEMY_API_KEY 
-  ? `https://arc-testnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`
-  : 'https://rpc.testnet.arc.network';
+const RPC_URL = 'https://rpc.testnet.arc.network';
 
 const publicClient = createPublicClient({
   chain: {

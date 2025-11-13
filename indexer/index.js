@@ -121,7 +121,7 @@ const KNOWN_TOKENS = {
 
 // Environment variables
 const WSS_URL = process.env.WSS_URL || 'wss://rpc.testnet.arc.network';
-const HTTP_RPC_URL = process.env.HTTP_RPC_URL || 'https://arc-testnet.g.alchemy.com/v2/Gwa0xpQWE3hHxyKllpxbGQmkRLNhV51N';
+const HTTP_RPC_URL = process.env.HTTP_RPC_URL || 'https://rpc.testnet.arc.network';
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY || '';
 
@@ -165,7 +165,8 @@ const supabase = SUPABASE_URL && SUPABASE_KEY
 
 // Log Supabase configuration status on startup
 console.log('\n=== Indexer Configuration ===');
-console.log('WSS_URL:', WSS_URL ? 'SET' : 'MISSING');
+console.log('WSS_URL:', WSS_URL ? WSS_URL : 'MISSING');
+console.log('HTTP_RPC_URL:', HTTP_RPC_URL ? HTTP_RPC_URL : 'MISSING');
 console.log('SUPABASE_URL:', SUPABASE_URL ? 'SET (' + SUPABASE_URL.substring(0, 30) + '...)' : 'MISSING');
 console.log('SUPABASE_KEY:', SUPABASE_KEY ? 'SET (' + SUPABASE_KEY.substring(0, 20) + '...)' : 'MISSING');
 console.log('Supabase client:', supabase ? '✓ INITIALIZED' : '✗ NOT INITIALIZED');
