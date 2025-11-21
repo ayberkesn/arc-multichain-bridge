@@ -33,3 +33,4 @@ indexer/.env
 # Vite
 .vite/
 
+.vercel

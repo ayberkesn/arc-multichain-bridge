@@ -1,5 +1,58 @@
 import { getDefaultConfig } from '@rainbow-me/rainbowkit';
-import { sepolia } from 'viem/chains';
+import { sepolia, baseSepolia, arbitrumSepolia, optimismSepolia, polygonAmoy, avalancheFuji, lineaSepolia } from 'viem/chains';
+import { defineChain } from 'viem';
+
+// Define newer chains manually if not available in installed viem version
+const unichainSepolia = defineChain({
+  id: 1301,
+  name: 'Unichain Sepolia',
+  nativeCurrency: {
+    decimals: 18,
+    name: 'Ether',
+    symbol: 'ETH',
+  },
+  rpcUrls: {
+    default: { http: ['https://sepolia.unichain.org'] },
+  },
+  blockExplorers: {
+    default: { name: 'Unichain Explorer', url: 'https://sepolia.uniscan.xyz' },
+  },
+  testnet: true,
+});
+
+const worldChainSepolia = defineChain({
+  id: 4801,
+  name: 'World Chain Sepolia',
+  nativeCurrency: {
+    decimals: 18,
+    name: 'Ether',
+    symbol: 'ETH',
+  },
+  rpcUrls: {
+    default: { http: ['https://worldchain-sepolia.g.alchemy.com/public'] },
+  },
+  blockExplorers: {
+    default: { name: 'World Chain Explorer', url: 'https://worldchain-sepolia.explorer.alchemy.com' },
+  },
+  testnet: true,
+});
+
+const inkSepolia = defineChain({
+  id: 763373,
+  name: 'Ink Sepolia',
+  nativeCurrency: {
+    decimals: 18,
+    name: 'Ether',
+    symbol: 'ETH',
+  },
+  rpcUrls: {
+    default: { http: ['https://rpc-gel-sepolia.inkonchain.com'] },
+  },
+  blockExplorers: {
+    default: { name: 'Ink Explorer', url: 'https://explorer-sepolia.inkonchain.com' },
+  },
+  testnet: true,
+});
 
 // Use Arc Testnet RPC endpoint
 const ARC_RPC_URL = 'https://rpc.testnet.arc.network';
@@ -29,6 +82,18 @@ const arcTestnet = {
 export const config = getDefaultConfig({
   appName: 'Bridge Kit App',
   projectId: 'ed1deffe285a3c80426c7502b6b773dd', // Replace with your WalletConnect Project ID
-  chains: [sepolia, arcTestnet],
+  chains: [
+    sepolia,
+    arcTestnet,
+    baseSepolia,
+    arbitrumSepolia,
+    optimismSepolia,
+    polygonAmoy,
+    avalancheFuji,
+    lineaSepolia,
+    unichainSepolia,
+    worldChainSepolia,
+    inkSepolia
+  ],
 });
 

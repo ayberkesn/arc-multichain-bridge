@@ -1,17 +1,13 @@
-import { useState } from 'react';
+import React from 'react';
 import { RainbowKitProvider, ConnectButton } from '@rainbow-me/rainbowkit';
 import { WagmiProvider, useAccount } from 'wagmi';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { config } from './config/wagmi';
 import BridgeModal from './components/BridgeModal';
-import LandingPage from './components/LandingPage';
-import Navigation, { TabType } from './components/Navigation';
-import Swap from './components/Swap';
-import Pools from './components/Pools';
-import CreatePool from './components/CreatePool';
 import MaintenancePage from './components/MaintenancePage';
-import XFollowFAB from './components/XFollowFAB';
-import { ArrowLeftRight, Home } from 'lucide-react';
+import BridgeGuide from './components/BridgeGuide';
+import { ArrowLeftRight, Moon, Sun } from 'lucide-react';
+import { ThemeProvider, useTheme } from './context/ThemeContext';
 import '@rainbow-me/rainbowkit/styles.css';
 
 const queryClient = new QueryClient();
@@ -27,88 +23,73 @@ function AppContent() {
   }
 
   const { address, isConnected } = useAccount();
-  const [isBridgeModalOpen, setIsBridgeModalOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<TabType>('bridge');
-  const [showLandingPage, setShowLandingPage] = useState(true);
+  const { theme, toggleTheme } = useTheme();
 
   return (
-    <>
-      {showLandingPage ? (
-        <LandingPage onGetStarted={() => setShowLandingPage(false)} />
-      ) : (
-        <div className="min-h-screen bg-orange-50 flex items-start justify-center p-3 sm:p-4 md:p-8">
-          <div className="w-full max-w-5xl mt-4 sm:mt-6 md:mt-8">
-            {/* Header with Wallet Connect */}
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-6 md:mb-8 gap-4">
-              <div className="flex items-center gap-4">
-                <button
-                  onClick={() => setShowLandingPage(true)}
-                  className="flex items-center gap-2 px-4 py-2 bg-white rounded-xl border border-gray-200 hover:bg-gray-50 transition-all shadow-sm"
-                  title="Back to Home"
-                >
-                  <Home className="w-5 h-5 text-gray-600" />
-                  <span className="text-sm font-medium text-gray-700 hidden sm:inline">Home</span>
-                </button>
-                <div>
-                  <h1 className="text-3xl md:text-4xl font-bold text-gray-900 mb-2">
-                    DeFi On ARC
-                  </h1>
-                  <p className="text-gray-600 text-xs md:text-sm">
-                    Bridge, Swap, and Manage Liquidity
-                  </p>
-                </div>
-              </div>
-              <div className="bg-white rounded-2xl p-2 border border-gray-200 shadow-lg self-start md:self-auto">
-              <ConnectButton
-                showBalance={true}
-                chainStatus="icon"
-                accountStatus={{
-                  smallScreen: 'avatar',
-                  largeScreen: 'full',
-                }}
-              />
-              </div>
+    <div className="min-h-screen bg-orange-50 dark:bg-gray-900 flex items-start justify-center p-3 sm:p-4 md:p-10 transition-colors duration-200 font-sans">
+      <div className="w-full max-w-6xl mt-4 sm:mt-6 md:mt-10 space-y-6">
+        <div className="bg-white dark:bg-gray-800 rounded-3xl border border-orange-100 dark:border-gray-700 shadow-xl p-6 md:p-8 transition-colors duration-200">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="inline-flex items-center text-xs font-semibold tracking-wide uppercase text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-900/30 px-3 py-1 rounded-full mb-3">
+                <ArrowLeftRight className="w-3 h-3 mr-2" />
+                Arc Testnet Bridge
+              </p>
+              <h1 className="text-3xl md:text-4xl font-bold text-gray-900 dark:text-white">
+                Unlock the Power of Arc
+              </h1>
+              <p className="text-sm md:text-base text-gray-600 dark:text-gray-300 mt-2 max-w-2xl">
+                Seamlessly bridge USDC across testnets and experience the speed of a stablecoin-native network.
+              </p>
             </div>
-
-            {/* Navigation Tabs */}
-            <Navigation activeTab={activeTab} onTabChange={setActiveTab} />
-
-            {/* Content Area */}
-            <div className="mt-6">
-              {activeTab === 'bridge' && (
-                <BridgeModal asPage={true} />
-              )}
-
-              {activeTab === 'swap' && <Swap />}
-              {activeTab === 'pools' && <Pools />}
-              {activeTab === 'create-pool' && <CreatePool />}
+            <div className="flex items-center gap-3">
+              {/* Theme Toggle Button */}
+              <button
+                onClick={toggleTheme}
+                className="p-3 rounded-xl bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-600 transition-all duration-200 shadow-sm"
+                title={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
+              >
+                {theme === 'light' ? (
+                  <Sun className="w-5 h-5 text-yellow-500" />
+                ) : (
+                  <Moon className="w-5 h-5 text-gray-200" />
+                )}
+              </button>
+              <div className="bg-gray-50 dark:bg-gray-700 rounded-2xl p-3 border border-gray-200 dark:border-gray-600 shadow-sm self-start md:self-auto">
+                <ConnectButton
+                  showBalance={true}
+                  chainStatus="icon"
+                  accountStatus={{
+                    smallScreen: 'avatar',
+                    largeScreen: 'full',
+                  }}
+                />
+              </div>
             </div>
           </div>
 
-          <BridgeModal
-            isOpen={isBridgeModalOpen}
-            onClose={() => setIsBridgeModalOpen(false)}
-          />
-
-          {/* X Follow FAB */}
-          <XFollowFAB />
+          <div className="mt-8 grid gap-6 lg:grid-cols-[3fr_2fr]">
+            <BridgeModal asPage />
+            <BridgeGuide address={address} isConnected={isConnected} />
+          </div>
         </div>
-      )}
-    </>
+      </div>
+    </div>
   );
 }
 
 function App() {
   return (
-    <WagmiProvider config={config}>
-      <QueryClientProvider client={queryClient}>
-        <RainbowKitProvider>
-          <AppContent />
-        </RainbowKitProvider>
-      </QueryClientProvider>
-    </WagmiProvider>
+    <ThemeProvider>
+      <WagmiProvider config={config}>
+        <QueryClientProvider client={queryClient}>
+          <RainbowKitProvider locale="en-US">
+            <AppContent />
+          </RainbowKitProvider>
+        </QueryClientProvider>
+      </WagmiProvider>
+    </ThemeProvider>
   );
 }
 
 export default App;
-
